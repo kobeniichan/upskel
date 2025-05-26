@@ -9,15 +9,17 @@ const crypto = require('crypto');
 
 const app = express();
 app.use(cors());
-app.use(express.static("public"));
 
-// Buat folder tmp jika belum ada
+// Serve static files from current directory (for index.html)
+app.use(express.static(__dirname));
+
+// Use /tmp for file storage on Vercel
 const tmpDir = "/tmp";
 if (!fs.existsSync(tmpDir)) {
     fs.mkdirSync(tmpDir, { recursive: true });
 }
 
-// Konfigurasi multer untuk menyimpan file di /tmp
+// Configure multer for file storage in /tmp
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         cb(null, tmpDir);
@@ -28,7 +30,12 @@ const storage = multer.diskStorage({
         cb(null, filename);
     },
 });
-const upload = multer({ storage });
+const upload = multer({ 
+    storage,
+    limits: {
+        fileSize: 10 * 1024 * 1024 // 10MB limit
+    }
+});
 
 // Image enhancer function
 const generateUsername = () => `${crypto.randomBytes(8).toString('hex')}_aiimglarger`;
@@ -50,6 +57,7 @@ const enhanceImage = async (buffer, filename = 'temp.jpg', scaleRatio = 4, type 
                 'User-Agent': 'Dart/3.5 (dart:io)',
                 'Accept-Encoding': 'gzip',
             },
+            timeout: 30000 // 30 second timeout
         });
 
         const { code } = uploadResponse.data.data;
@@ -57,22 +65,26 @@ const enhanceImage = async (buffer, filename = 'temp.jpg', scaleRatio = 4, type 
 
         const params = { code, type, username, scaleRadio: scaleRatio.toString() };
 
-        // Poll for result
+        // Poll for result with timeout
         let result;
-        for (let i = 0; i < 1000; i++) {
+        const maxAttempts = 60; // Reduce from 1000 to avoid timeout
+        for (let i = 0; i < maxAttempts; i++) {
             const statusResponse = await axios.post('https://photoai.imglarger.com/api/PhoAi/CheckStatus', JSON.stringify(params), {
                 headers: {
                     'User-Agent': 'Dart/3.5 (dart:io)',
                     'Accept-Encoding': 'gzip',
                     'Content-Type': 'application/json',
                 },
+                timeout: 10000 // 10 second timeout
             });
 
             result = statusResponse.data.data;
             console.log(`[CHECK ${i + 1}]`, result.status);
 
             if (result.status === 'success') break;
-            await new Promise(resolve => setTimeout(resolve, 500));
+            if (result.status === 'error') throw new Error('Enhancement failed');
+            
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Increase delay to 1 second
         }
 
         if (result.status === 'success') {
@@ -86,7 +98,24 @@ const enhanceImage = async (buffer, filename = 'temp.jpg', scaleRatio = 4, type 
     }
 };
 
-// Endpoint untuk enhance image
+// Serve enhanced images from /tmp
+app.get('/enhanced_:filename', (req, res) => {
+    const filename = 'enhanced_' + req.params.filename;
+    const filePath = path.join(tmpDir, filename);
+    
+    if (fs.existsSync(filePath)) {
+        res.sendFile(filePath);
+    } else {
+        res.status(404).json({ error: 'File not found' });
+    }
+});
+
+// Root route to serve index.html
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+// Endpoint for image enhancement
 app.post("/api/enhance", upload.single("image"), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: "No file uploaded" });
@@ -104,7 +133,10 @@ app.post("/api/enhance", upload.single("image"), async (req, res) => {
         const enhancedUrl = await enhanceImage(buffer, req.file.originalname, scaleRatio, type);
         
         // Download enhanced image
-        const response = await axios.get(enhancedUrl, { responseType: 'arraybuffer' });
+        const response = await axios.get(enhancedUrl, { 
+            responseType: 'arraybuffer',
+            timeout: 30000 // 30 second timeout
+        });
         const enhancedBuffer = Buffer.from(response.data);
         
         // Save enhanced image locally
@@ -140,7 +172,13 @@ app.post("/api/enhance", upload.single("image"), async (req, res) => {
     }
 });
 
-// Serve file langsung dari root URL
-app.use(express.static(tmpDir));
-
+// For Vercel, export the app
 module.exports = app;
+
+// For local development
+if (require.main === module) {
+    const port = process.env.PORT || 3000;
+    app.listen(port, () => {
+        console.log(`Server running on port ${port}`);
+    });
+}
