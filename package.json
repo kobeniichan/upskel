@@ -1,0 +1,18 @@
+{
+  "name": "image-enhancer-vercel",
+  "version": "1.0.0",
+  "main": "index.js",
+  "dependencies": {
+    "express": "^4.18.2",
+    "multer": "^1.4.5-lts.1",
+    "cors": "^2.8.5",
+    "axios": "^1.6.0",
+    "form-data": "^4.0.0"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "description": "AI Image Enhancer using imglarger API",
+  "keywords": ["image", "enhance", "upscale", "ai"]
+}
